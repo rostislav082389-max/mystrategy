@@ -260,7 +260,7 @@ function total(){ return S.funds.reduce(function(s,f){ return s + cap(f); }, 0);
 function reserveFund(){ return S.funds.find(function(f){ return f.reserve; }) || null; }
 function reserveRub(){ const r = reserveFund(); return r? cap(r) : 0; }
 function fundColor(f){ return COLORS[S.funds.indexOf(f) % COLORS.length]; }
-function marketPart(f){ return (f.value||0) - (f.bw != null ? f.bw : (f.bought||0)); }
+function marketPart(f){ return (f.value||0) - ((f.bw != null && f.bw > EPS) ? f.bw : (f.bought||0)); }
 function drawdown(f){ return f.base? (marketPart(f) - f.base)/f.base : 0; }
 function isWaiting(f){ return (f.bought||0) > EPS && marketPart(f) < f.base - EPS; }
 function closeCycleIfRecovered(f){
@@ -699,11 +699,12 @@ document.getElementById('pbody').addEventListener('input', function(e){
   const el = e.target; if(!el.dataset.field) return;
   const f = S.funds.find(function(x){ return x.id === +el.dataset.id; }); if(!f) return;
   const v = num(el.value);
-  if(el.dataset.field === 'value'){
+  if(el.dataset.field === 'value' && Math.round(v) > 0){
+    const newV = Math.round(v);
     const oldV = f.value || 0;
-    f.value = Math.round(v);
+    f.value = newV;
     if(oldV > 0 && (f.bought||0) > EPS){
-      const k = f.value / oldV;
+      const k = newV / oldV;
       if(f.bw == null) f.bw = f.bought;
       f.bw = f.bw * k;
     }
@@ -739,7 +740,7 @@ setSec.addEventListener('input', function(e){
     if(di.field === 'sname') f.name = el.value;
     if(di.field === 'sgoal') f.goal = num(el.value);
     if(di.field === 'squota') f.quota = num(el.value);
-    if(di.field === 'svalue'){
+    if(di.field === 'svalue' && num(el.value) > 0){
       const oldV = f.value || 0;
       f.value = num(el.value);
       if(oldV > 0 && (f.bought||0) > EPS){

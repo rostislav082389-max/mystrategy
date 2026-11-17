@@ -1,4 +1,4 @@
-const CACHE = 'pf-v29';
+const CACHE = 'pf-v30';
 const ASSETS = ['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png'];
 self.addEventListener('install', function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(ASSETS); }));
