@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Портфель</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-font,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0b1c2e;color:#e8f0f8;padding:12px}
+.nav{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.nav button{background:#2a4a63;border:1px solid #3a6a8a;color:#fff;padding:8px 12px;border-radius:6px;cursor:pointer}
+.nav button.active{background:#3a6a8a}
+.main{max-width:900px;margin:0 auto}
+.header{background:#1a3a52;padding:12px;border-radius:8px;margin-bottom:12px}
+.hrow{display:flex;gap:16px;flex-wrap:wrap}
+.hcell{display:flex;gap:4px}
+table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:14px}
+th,td{padding:8px;text-align:left}
+th{background:#1a3a52;border-bottom:1px solid #3a6a8a}
+tr:nth-child(even){background:#162a44}
+tr.pause{background:#2a1a1a}
+input{width:100%;padding:6px;border:1px solid #4a6a8a;background:#12243a;color:#fff;border-radius:4px}
+input:focus{outline:none;border-color:#3a6a8a}
+button{background:#2a4a63;border:1px solid #3a6a8a;color:#fff;padding:8px 12px;border-radius:6px;cursor:pointer}
+button:hover{background:#3a5a7a}
+.small{font-size:12px;color:#8aa0b0}
+.triggers-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.trow{display:flex;gap:8px;align-items:center;flex:1}
+.trow input{width:60px;text-align:center;padding:4px}
+.tbtn{background:#3a6a8a;border:none;padding:4px 8px;border-radius:4px;cursor:pointer}
+.tbtn.del{background:#c0392b}
+.add-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.msg{color:#2ecc71;margin:4px 0}
+.err{color:#e74c3c;margin:4px 0}
+</style>
+</head>
+<body>
+
+<div class="nav">
+<button class="active" onclick="setPage('portfolio')">Портфель</button>
+<button onclick="setPage('contribution')">Взнос</button>
+<button onclick="setPage('rebalance')">Ребаланс</button>
+<button onclick="setPage('history')">Журнал</button>
+<button onclick="setPage('settings')">Настройки</button>
+</div>
+
+<div id="page" class="main"></div>
+
+<script>
+const DATA_KEY = 'portfolio_v31';
+
+function makeFund(name,value,target,quota){
+  return {id:Date.now()+Math.random(),name,value,base:value,target,quota,bw:0,trigger_spent:0,triggers:[],status:'ok',cycle:true};
+}
+
+const DEFAULT = {
+  version:31,
+  funds:[makeFund('Акции',100000,50,30)],
+  reserve:0,
+  pending:0,
+  settings:{pauseDays:7,reservePct:20,noRebalDrawdown:true},
+  history:[]
+};
+
+function save(d){localStorage.setItem(DATA_KEY,JSON.stringify(d));}
+function load(){
+  let d;
+  try{d=JSON.parse(localStorage.getItem(DATA_KEY)||'{}')}catch(e){d={}};}
+  if(!d.version){d.version=30;}
+  if(d.version<31){
+    (d.funds||[]).forEach(f=>{
+      if(!f.triggers) f.triggers=[];
+      if(f.trigger_spent===undefined) f.trigger_spent=0;
+      (f.triggers||[]).forEach(l=>{
+        if(l.spent===undefined) l.spent=0;
+        if(l.done===undefined) l.done=false;
+      });
+      if(f.status===undefined) f.status='ok';
+    });
+    if(d.settings.noRebalDrawdown===undefined) d.settings.noRebalDrawdown=true;
+    d.version=31;
+  }
+  save(d); return d;
+}
+
+let data=load();
+
+function setPage(p){
+  const pages={'portfolio':0,'contribution':1,'rebalance':2,'history':3,'settings':4};
+  document.getElementById('page').innerHTML=pages[p]===0?renderPortfolio():pages[p]===1?renderContribution():pages[p]===2?renderRebalance():pages[p]===3?renderHistory():renderSettings();
+}
+
+function fmt(n){return Math.round(n).toLocaleString('ru-RU');}
+
+function renderPortfolio(){
+  const total=data.funds.reduce((s,f)=>s+f.value,0);
+  let html=`<div class="header">
+  <div class="hrow"><div class="hcell">Стоимость портфеля: ${fmt(total)} ₽</div>
+  <div class="hcell">Резерв: ${fmt(data.reserve)} ₽</div>
+  <div class="hcell">Триггеры: ${data.funds.reduce((c,f)=>c+(f.triggers?.length||0),0)} уровней</div>
+  <div class="hcell">Ребаланс: —</div></div></div>`;
+
+  html+=`<h3>Состав портфеля</h3><table><tr><th>Фонд</th><th>Стоимость</th><th>От базы</th><th>Доля</th><th>Цель</th><th>Откл.</th><th>База</th><th>Просадка</th><th>Статус</th><th>Цикл</th></tr>`;
+  data.funds.forEach(f=>{
+    const dd=f.value>=f.base?0:(f.base-f.value)/f.base;
+    const pct=Math.round(dd*100)/100;
+    const share=total?f.value/total:0;
+    const dev=share-f.target/100;
+    const status=f.status==='pause'?'Ждём отыгрыша':f.status==='drawdown'?'Просадка':f.status==='ok'?'Норма':'—';
+    const quotaPool=data.reserve+data.pending;
+    const Q=quotaPool*f.quota/100;
+    const rem=Q-f.trigger_spent;
+    const btnText=rem>1?'Докупить ещё '+fmt(rem):(rem>0.5?'Докупить '+fmt(rem)+' ₽':'Уровни закрыты, ждём отыгрыша');
+
+    let trigs='';
+    const sorted=f.triggers.slice().sort((a,b)=>a.p-b.p);
+    sorted.forEach(l=>{
+      const col=l.done?'✅':'⬜';
+      trigs+=`<div class="trow"><input type="number" value="${l.p}" min="0" step="0.1" onchange="updateTrigger(this,'${f.id}',0)" class="tp"> ${l.p}% → <input type="number" value="${l.s}" min="0" step="0.1" onchange="updateTrigger(this,'${f.id}',1)" class="tp"> % ${col} <button class="tbtn del" onclick="removeTrigger('${f.id}',this)" title="Удалить">×</button></div>`;
+    });
+    trigs+=`<div class="add-row"><input type="number" id="nt_p" value="10" min="0" step="0.1"> % → <input type="number" id="nt_s" value="30" min="0" step="0.1"> % <button onclick="addTrigger('${f.id}')" title="Добавить уровень">+ Уровень</button></div>`;
+
+    html+=`<tr><td>${f.name}<div class="triggers-row">Цель ${f.target}% · Квота ${f.quota}% · Пул ${fmt(quotaPool)} ₽<div class="triggers-row">${trigs}</div></div></td><td><input type="number" value="${f.value}" min="0" onchange="updateValue('${f.id}')"></td><td>${Math.round((1-f.value/f.base)*100*100)/100}%</td><td>${Math.round(share*100*100)/100}%</td><td>${f.target}%</td><td>${Math.round(dev*100*100)/100}%</td><td>${fmt(f.base)}</td><td>${pct}%</td><td><span class="small">${status}</span></td><td><button onclick="newCycle('${f.id}')⟳</button></td></tr>`;
+  });
+  html+=`<tr><td>Итого</td><td>${fmt(total)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>`;
+  return html;
+}
+
+function updateValue(id){
+  const f=data.funds.find(x=>x.id==id); if(!f)return;
+  const v=parseFloat(f.value);
+  if(!isFinite(v)||v<=0) return;
+  f.value=Math.round(v);
+  if(f.value>f.base){f.base=f.value; data.history.push({date:new Date().toISOString(),fund:f.name,type:'База обновлена',amount:0}); save(data); }
+  renderPortfolio();
+}
+
+function newCycle(id){
+  const f=data.funds.find(x=>x.id==id); if(!f)return;
+  f.base=f.value; f.trigger_spent=0; f.status='ok';
+  (f.triggers||[]).forEach(l=>{l.done=false; l.spent=0;});
+  data.history.push({date:new Date().toISOString(),fund:f.name,type:'Новый цикл',amount:0}); save(data); renderPortfolio();
+}
+
+function updateTrigger(el,fid,kind){
+  const arr=kind?data.funds.find(x=>x.id==fid).triggers.map(l=>({...l}):l;
+  // упрощённо: перечитываем при рендере через значения инпутов
+}
+
+// Перестройка: читаем инпуты по ID внутри фонда — упрощённый подход через класс
+function findInput(cid,kind){
+  const row=document.querySelector(`#tf_${cid}_${kind}`); return row;
+}
+
+// Заменяем рендер триггеров на прямой контроль
+function renderTriggersFor(fid){
+  const f=data.funds.find(x=>x.id==fid); if(!f)return [];
+  const sorted=f.triggers.slice().sort((a,b)=>a.p-b.p);
+  return sorted;
+}
+
+function addTrigger(fid){
+  const f=data.funds.find(x=>x.id==fid); if(!f)return;
+  const p=parseFloat(document.getElementById('nt_p').value);
+  const s=parseFloat(document.getElementById('nt_s').value);
+  if(!isFinite(p)||!isFinite(s)||p<0||s<0) {alert('Введите корректные числа'); return;}
+  f.triggers.push({p,s,spent:0,done:false});
+  f.triggers.sort((a,b)=>a.p-b.p);
+  checkFund(f); save(data); renderPortfolio();
+}
+
+function removeTrigger(fid,btn){
+  const f=data.funds.find(x=>x.id==fid); if(!f)return;
+  const idx=f.triggers.indexOf(btn.dataset.t);
+  if(idx>=0){f.triggers.splice(idx,1); checkFund(f); save(data); renderPortfolio();}
+}
+
+function updateTriggerVal(path){
+  // path: fid,index,field (p/s)
+  const [fid,i,field]=path.split(';');
+  const f=data.funds.find(x=>x.id==fid); if(!f||!f.triggers[i]) return;
+  const v=parseFloat(document.querySelector(`#ti_${fid}_${i}_${field}`).value);
+  if(!isFinite(v)) return;
+  f.triggers[i][field]=Math.max(0,v);
+  f.triggers.sort((a,b)=>a.p-b.p);
+  checkFund(f); save(data); renderPortfolio();
+}
+
+function checkFund(f){
+  const pool=data.reserve+data.pending;
+  const Q=pool*f.quota/100;
+  const dd=f.value>=f.base?0:(f.base-f.value)/f.base;
+  let changed=false;
+  const sorted=f.triggers.slice().sort((a,b)=>a.p-b.p);
+  sorted.forEach((l,idx)=>{
+    if(dd>=l.p && !l.done){
+      l.done=true; changed=true;
+      const target=pool*(l.s/100);
+      const avail=Q-f.trigger_spent;
+      const actual=Math.min(target,avail);
+      f.trigger_spent+=actual;
+      if(f.trigger_spent>=Q-0.5){f.status='pause'; f.trigger_spent=Math.min(f.trigger_spent,Q);}
+      else{f.status='drawdown';}
+    }
+  });
+  if(!changed&&f.status!=='ok'&&dd===0){f.status='ok';}
+}
+
+function renderContribution(){
+  const pool=data.reserve+data.pending;
+  const sum=data.funds.reduce((s,f)=>s+f.value,0);
+  const rem=sum-data.funds.reduce((s,f)=>s+f.target*sum/100,0); // упрощение
+  let html=`<h2>Взнос</h2><div class="hrow">
+  <div>Сумма взноса, ₽<br><input type="number" id="c_sum" value="10000" min="0"></div>
+  <div>В резерв, %<br><input type="number" id="c_res" value="20" min="0" max="100"></div>
+  <button onclick="doContribution()">Записать</button></div>`;
+  html+=`<div id="c_out"></div>`;
+  return html;
+}
+
+function doContribution(){
+  const sum=parseFloat(document.getElementById('c_sum').value);
+  const r=parseFloat(document.getElementById('c_res').value);
+  if(!isFinite(sum)||sum<0){alert('Сумма'); return;}
+  const reservePart=Math.round(sum*r/100);
+  const other=Math.round(sum*(100-r)/100);
+  data.reserve+=reservePart;
+  data.history.push({date:new Date().toISOString(),fund:'Резерв',type:'Пополнение',amount:reservePart});
+  checkAll(); save(data);
+  document.getElementById('c_out').innerHTML=`Резерв: ${fmt(data.reserve)} ₽ · На докупки: ${fmt(data.reserve)} ₽`;
+}
+
+function checkAll(){
+  data.funds.forEach(checkFund);
+  const pool=data.reserve+data.pending;
+  data.funds.forEach(f=>{
+    const Q=pool*f.quota/100;
+    const spent=f.trigger_spent;
+    if(spent>=Q-0.5) f.status='pause';
+    else if((f.base-f.value)/f.base>0.05) f.status='drawdown';
+    else f.status='ok';
+  });
+}
+
+function renderRebalance(){
+  let html=`<h2>Ребалансировка</h2>`;
+  const total=data.funds.reduce((s,f)=>s+f.value,0);
+  const actions=[];
+  const sold=data.reserve;
+  data.funds.forEach(f=>{
+    const share=f.value/total;
+    const t=f.target/100;
+    const diff=share-t;
+    if(diff>0.03){
+      const sell=Math.round(diff*total);
+      if(sell>0){actions.push(`Продаём ${f.name}: ${sell} ₽ (перевес ${Math.round(diff*100*100)/100} п.п.)`); data.reserve+=sell;}
+      if(diff>0.05) actions[actions.length-1]+=' [СРОЧНО]';
+    }
+    if(diff<-0.03 && f.status!=='pause'){
+      const buy=Math.round((-diff)*total);
+      const avail=data.reserve;
+      const actual=Math.min(buy,avail);
+      if(actual>0){actions.push(`Докупаем ${f.name}: ${actual} ₽ (недобор ${Math.round(-diff*100*100)/100} п.п.)`); data.reserve-=actual;}
+    }
+  });
+  html+=actions.length?'<ul>'+actions.map(a=>'<li>'+a).join('')+'</ul>':'Нет операций.';
+  html+=`<div>Резерв после: ${fmt(data.reserve)} ₽</div>`;
+  return html;
+}
+
+function renderHistory(){
+  const rows=data.history.map(h=>`<tr><td>${new Date(h.date).toLocaleString('ru-RU')}</td><td>${h.fund}</td><td>${h.type}</td><td>${fmt(h.amount)} ₽</td></tr>`);
+  return `<h2>История операций</h2><table><tr><th>Дата</th><th>Фонд</th><th>Тип</th><th>Сумма</th></tr>`+rows.join('')+`<tr><td>Итого</td><td></td><td></td><td>${fmt(data.reserve)} ₽</td></tr></table>`;
+}
+
+function renderSettings(){
+  const s=data.settings;
+  return `<h2>Настройки</h2><div class="hrow">
+  <div>Пауза после цикла, дней<br><input type="number" id="sd1" value="${s.pauseDays}" min="1"></div>
+  <div>Взнос в резерв, %<br><input type="number" id="sd2" value="${s.reservePct}" min="0" max="100"></div>
+  <div>Не докупать ребалансом фонды в просадке<br><input type="checkbox" id="sd3" ${s.noRebalDrawdown?'checked':''}></div>
+  <div><button onclick="saveSettings()">Сохранить</button></div></div>
+  <h3>Фонды, цели и квоты</h3><table><tr><th>Фонд</th><th>Цель %</th><th>Квота %</th><th>Стоимость</th><th>База</th></tr>`+data.funds.map(f=>`<tr><td>${f.name}</td><td>${f.target}</td><td>${f.quota}</td><td>${fmt(f.value)}</td><td>${fmt(f.base)}</td></tr>`).join('')+`<tr><td>Итого</td><td></td><td></td><td>${fmt(data.funds.reduce((a,b)=>a+b.value,0))} ₽</td><td></td></tr></table>
+  <h3>Управление данными</h3><div>
+  <button onclick="exportData()">Экспорт в JSON</button> &nbsp;
+  <input type="file" id="imp" onchange="importData(this)"><br><br>
+  <button onclick="confirmReset()">Сбросить всё</button>
+  </div>`;
+}
+
+function saveSettings(){
+  data.settings.pauseDays=parseFloat(document.getElementById('sd1').value);
+  data.settings.reservePct=parseFloat(document.getElementById('sd2').value);
+  data.settings.noRebalDrawdown=document.getElementById('sd3').checked;
+  save(data);
+}
+
+function exportData(){
+  const a=JSON.stringify(data,null,2); const b=new Blob([a],{type:'application/json'}); const u=URL.createObjectURL(b); const aEl=document.createElement('a'); aEl.href=u; aEl.download='portfolio.json'; aEl.click();
+}
+
+function importData(inp){
+  const f=inp.files[0]; if(!f)return; f.readAsText(t=>{data=JSON.parse(t); save(data); renderPortfolio(); setPage('settings');});
+}
+
+function confirmReset(){
+  if(!confirm('Сбросить всё (сделайте экспорт заранее)?')) return;
+  data=Object.assign({},DEFAULT); save(data); renderPortfolio(); setPage('portfolio');
+}
+
+function setPage(p){['portfolio','contribution','rebalance','history','settings'].forEach(x=>document.querySelector('.nav button').classList.remove('active')); document.querySelector(`.nav button[onclick*="setPage('${p}')"]`).classList.add('active');}
+
+setPage('portfolio');
+</script>
+</body>
+</html>
