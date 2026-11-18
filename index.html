@@ -37,7 +37,7 @@ h2 .ic svg{width:14px; height:14px}
 .hint{font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.45}
 .tblwrap{overflow-x:auto; margin:0 -4px; padding:0 4px; -webkit-overflow-scrolling:touch}
 table{border-collapse:collapse; width:100%; font-size:13px}
-#pbody_t, #sbody_t{min-width:660px}
+#pbody_t{min-width:660px} #sbody_t{min-width:775px}
 th{font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; text-align:left; padding:6px 7px; border-bottom:1px solid var(--line); white-space:nowrap}
 td{padding:7px; border-bottom:1px solid #f0f3f8; white-space:nowrap; vertical-align:middle}
 tr:last-child td{border-bottom:none}
@@ -159,7 +159,7 @@ input[type=checkbox]{width:19px; height:19px; accent-color:var(--accent)}
 <section id="tab-set" class="tab">
   <div class="card">
     <h2><span class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3a9 9 0 1 0 9 9h-9z" fill="currentColor"/><path d="M14 2a9 9 0 0 1 8 8h-8z" fill="currentColor" opacity=".5"/></svg></span>Фонды, цели и квоты</h2>
-    <div class="tblwrap"><table id="sbody_t"><thead><tr><th>Фонд</th><th>Цель %</th><th>Квота %</th><th>Резерв</th><th>Стоимость</th><th>База</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
+    <div class="tblwrap"><table id="sbody_t"><thead><tr><th>Фонд</th><th>Цель %</th><th>Квота %</th><th>Триггеры</th><th>Резерв</th><th>Стоимость</th><th>База</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
     <p class="hint">Стоимость — текущая стоимость фонда в рублях. База — пик стоимости в цикле, от неё считаются просадка и триггеры. Квоты докупок считаются от фонда-резерва (галочка «Резерв»).
     <div class="row" style="margin-top:10px"><button class="btn sec" id="fAdd">+ Фонд</button></div>
   </div>
@@ -168,6 +168,14 @@ input[type=checkbox]{width:19px; height:19px; accent-color:var(--accent)}
     <div class="tblwrap"><table><thead><tr><th>Просадка, %</th><th>Доля квоты, %</th><th></th></tr></thead><tbody id="tbody"></tbody></table></div>
     <div class="row" style="margin-top:10px"><button class="btn sec" id="tAdd">+ Уровень</button></div>
     <p class="hint" id="tSum"></p>
+  </div>
+  <div class="card" id="cardFT">
+    <h2><span class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M6 3h12v18H6zM9 7h6M9 11h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Свои триггеры фонда</h2>
+    <div class="row">
+      <label class="f">Фонд<select id="ftFund" class="inp sel"></select></label>
+    </div>
+    <div id="ftBox"></div>
+    <p class="hint">Пока у фонда нет своих уровней, он следует общей таблице «Триггеры просадки» — она работает как шаблон по умолчанию. «Сделать свои уровни» копирует общие уровни в персональные, дальше их можно менять без влияния на другие фонды.</p>
   </div>
   <div class="card">
     <h2><span class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8h16M4 16h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="8" r="2.3" fill="currentColor"/><circle cx="15" cy="16" r="2.3" fill="currentColor"/></svg></span>Прочие настройки</h2>
@@ -273,13 +281,14 @@ function closeCycleIfRecovered(f){
   return false;
 }
 function paused(f){ const p = S.pause[f.id]; return p? (new Date() < new Date(p)) : false; }
-function cumShare(f){ const dd = drawdown(f)*100; let s = 0; for(const t of S.triggers){ if(dd <= t.dd + EPS) s += t.q; } return s; }
+function trigList(f){ return (f.trig && f.trig.length)? f.trig : S.triggers; }
+function cumShare(f){ const dd = drawdown(f)*100; let s = 0; for(const t of trigList(f)){ if(dd <= t.dd + EPS) s += t.q; } return s; }
 function poolRub(){ let s = reserveRub(); for(const f of S.funds){ if(!f.reserve) s += (f.bought||0); } return s + (S.pend||0); }
 function quotaRub(f){ return (f.quota||0)/100 * poolRub(); }
 function targetRub(f){ return Math.max(0, quotaRub(f) * cumShare(f)/100 - (f.spent||0)); }
 function levelStatus(f){
   const q = quotaRub(f); let cum = 0;
-  return S.triggers.map(function(t){ cum += t.q; return (f.spent||0) >= cum*q/100 - EPS; });
+  return trigList(f).map(function(t){ cum += t.q; return (f.spent||0) >= cum*q/100 - EPS; });
 }
 function badge(f){
   if(f.reserve) return '<span class="badge b-info">Резерв</span>';
@@ -400,6 +409,7 @@ function undoEntry(j, idx){
   S.pend = Math.round(Math.max(0, (S.pend||0) + (j.amount - (sa || 0))));
 }
 let RECRES = null;
+let FTSEL = null;
 let PLAN = {}, RPLAN = {}, PLAN_RES = 0;
 let CKEY = null, CSNAP = null, CREC = {};
 function renderPortfolio(){
@@ -618,6 +628,7 @@ function renderSettings(){
     rows += '<tr><td><input class="inp wide" data-id="' + f.id + '" data-field="sname" value="' + esc(f.name) + '"></td>'
       + '<td><input class="inp" inputmode="decimal" data-id="' + f.id + '" data-field="sgoal" value="' + fmtIn(f.goal) + '"></td>'
       + '<td><input class="inp" inputmode="decimal" data-id="' + f.id + '" data-field="squota" value="' + fmtIn(f.quota||0) + '"></td>'
+      + '<td><button class="mini bl" data-act="ftOpen" data-id="' + f.id + '">' + ((f.trig && f.trig.length)? 'Свои · ' + f.trig.length : 'Общие') + '</button></td>'
       + '<td><input type="checkbox" data-id="' + f.id + '" data-field="sres"' + (f.reserve? ' checked':'') + '></td>'
       + '<td><input class="inp" inputmode="decimal" data-id="' + f.id + '" data-field="svalue" value="' + fmtRub(f.value) + '"></td>'
       + '<td><input class="inp" inputmode="decimal" data-id="' + f.id + '" data-field="sbase" value="' + fmtRub(f.base) + '"></td>'
@@ -632,10 +643,44 @@ function renderSettings(){
   });
   document.getElementById('tbody').innerHTML = trs;
   const sum = S.triggers.reduce(function(s,x){ return s + (x.q||0); }, 0);
-  document.getElementById('tSum').textContent = 'Сумма долей квот: ' + fnum(sum,0) + '% от резерва на полный цикл.' + (Math.abs(sum-100) > 0.01? ' Сумма не равна 100% — проверьте.' : '');
+  document.getElementById('tSum').textContent = 'Сумма долей квот: ' + fnum(sum,0) + '% от резерва на полный цикл.' + (Math.abs(sum-100) > 0.01? ' Сумма не равна 100% — проверьте.' : '') + ' Общие уровни — шаблон для фондов без своих.';
+  const ftSel = document.getElementById('ftFund');
+  if(ftSel){
+    if(FTSEL == null && S.funds.length) FTSEL = S.funds[0].id;
+    let opts = '';
+    for(const f of S.funds){ opts += '<option value="' + f.id + '"' + (f.id === FTSEL? ' selected':'') + '>' + esc(f.name) + '</option>'; }
+    ftSel.innerHTML = opts;
+  }
+  const ftBox = document.getElementById('ftBox');
+  if(ftBox){
+    const sf = S.funds.find(function(x){ return x.id === FTSEL; });
+    if(!sf){ ftBox.innerHTML = '<p class="hint">Сначала добавьте фонд в таблице выше.</p>'; }
+    else if(!sf.trig || !sf.trig.length){
+      ftBox.innerHTML = '<p class="hint">Сейчас «' + esc(sf.name) + '» работает по общим уровням из «Триггеров просадки».</p>'
+        + '<div class="row" style="margin-top:10px"><button class="btn sec" data-act="ftMake" data-id="' + sf.id + '">Сделать свои уровни</button></div>';
+    } else {
+      let fr = '';
+      sf.trig.forEach(function(tr, i){
+        fr += '<tr><td><input class="inp" inputmode="decimal" data-id="' + sf.id + '" data-fti="' + i + '" data-field="ftdd" value="' + fmtIn(tr.dd) + '"></td>'
+          + '<td><input class="inp" inputmode="decimal" data-id="' + sf.id + '" data-fti="' + i + '" data-field="ftq" value="' + fmtIn(tr.q) + '"></td>'
+          + '<td><button class="del" data-act="delFT" data-id="' + sf.id + '" data-fti="' + i + '">✕</button></td></tr>';
+      });
+      const fsum = sf.trig.reduce(function(s,x){ return s + (x.q||0); }, 0);
+      ftBox.innerHTML = '<div class="tblwrap"><table><thead><tr><th>Просадка, %</th><th>Доля квоты, %</th><th></th></tr></thead><tbody>' + fr + '</tbody></table></div>'
+        + '<div class="row" style="margin-top:10px"><button class="btn sec" data-act="ftAdd" data-id="' + sf.id + '">+ Уровень</button><button class="btn sec" data-act="ftReset" data-id="' + sf.id + '">Вернуть общие</button></div>'
+        + '<p class="hint" id="ftSum">Сумма долей квот: ' + fnum(fsum,0) + '% от резерва на полный цикл.' + (Math.abs(fsum-100) > 0.01? ' Сумма не равна 100% — проверьте.' : '') + '</p>';
+    }
+  }
   document.getElementById('sPause').value = fmtIn(S.pauseDays);
   document.getElementById('sResShare').value = fmtIn(S.contribReserveShare);
   const ddCb = document.getElementById('sSkipDD'); if(ddCb) ddCb.checked = S.skipRebDrawdown !== false;
+}
+function renderFTSum(){
+  const f = S.funds.find(function(x){ return x.id === FTSEL; });
+  if(!f || !f.trig) return;
+  const el = document.getElementById('ftSum'); if(!el) return;
+  const sum = f.trig.reduce(function(s,x){ return s + (x.q||0); }, 0);
+  el.textContent = 'Сумма долей квот: ' + fnum(sum,0) + '% от резерва на полный цикл.' + (Math.abs(sum-100) > 0.01? ' Сумма не равна 100% — проверьте.' : '');
 }
 function plural(n, one, few, many){
   const m10 = n % 10, m100 = n % 100;
@@ -738,6 +783,13 @@ setSec.addEventListener('input', function(e){
     if(di.field === 'tq') tr.q = num(el.value);
     save(); renderPortfolio(); updateHeader(); return;
   }
+  if(di.fti != null){
+    const f = S.funds.find(function(x){ return x.id === +di.id; }); if(!f) return;
+    const tr = f.trig && f.trig[+di.fti]; if(!tr) return;
+    if(di.field === 'ftdd') tr.dd = num(el.value);
+    if(di.field === 'ftq') tr.q = num(el.value);
+    save(); renderPortfolio(); updateHeader(); renderFTSum(); return;
+  }
   if(di.id != null && di.field && di.field !== 'sres'){
     const f = S.funds.find(function(x){ return x.id === +di.id; }); if(!f) return;
     if(di.field === 'sname') f.name = el.value;
@@ -770,7 +822,8 @@ setSec.addEventListener('change', function(e){
     else if(f){ f.reserve = false; }
     save(); renderAll(); return;
   }
-  if(di.field || di.ti != null || el.id === 'sPause' || el.id === 'sResShare' || el.id === 'sSkipDD'){ save(); renderAll(); }
+  if(el.id === 'ftFund'){ FTSEL = +el.value; renderAll(); return; }
+  if(di.field || di.ti != null || di.fti != null || el.id === 'sPause' || el.id === 'sResShare' || el.id === 'sSkipDD'){ save(); renderAll(); }
 });
 document.addEventListener('click', function(e){
   const b = e.target.closest('[data-act]'); if(!b) return;
@@ -829,10 +882,33 @@ document.addEventListener('click', function(e){
     const f = S.funds.find(function(x){ return x.id === +b.dataset.id; }); if(!f) return;
     if(!confirm('Удалить фонд «' + f.name + '»?')) return;
     delete S.pause[f.id];
+    if(FTSEL === f.id) FTSEL = null;
     S.funds = S.funds.filter(function(x){ return x !== f; });
     save(); renderAll(); toast('Фонд удалён');
   }
   if(act === 'delT'){ S.triggers.splice(+b.dataset.ti, 1); save(); renderAll(); }
+  if(act === 'ftOpen'){ FTSEL = +b.dataset.id; renderAll(); const fc = document.getElementById('cardFT'); if(fc) fc.scrollIntoView({behavior:'smooth', block:'start'}); }
+  if(act === 'ftMake'){
+    const f = S.funds.find(function(x){ return x.id === +b.dataset.id; }); if(!f) return;
+    f.trig = S.triggers.map(function(t){ return {dd: t.dd, q: t.q}; });
+    save(); renderAll(); toast('Свои уровни созданы для «' + f.name + '» — можно менять');
+  }
+  if(act === 'ftReset'){
+    const f = S.funds.find(function(x){ return x.id === +b.dataset.id; }); if(!f) return;
+    if(!confirm('Вернуть «' + f.name + '» к общим триггерам? Персональные уровни будут удалены.')) return;
+    delete f.trig; save(); renderAll(); toast('«' + f.name + '» снова следует общим триггерам');
+  }
+  if(act === 'ftAdd'){
+    const f = S.funds.find(function(x){ return x.id === +b.dataset.id; }); if(!f || !f.trig) return;
+    f.trig.push({dd: -(f.trig.length+1)*10, q: 0});
+    save(); renderAll();
+  }
+  if(act === 'delFT'){
+    const f = S.funds.find(function(x){ return x.id === +b.dataset.id; }); if(!f || !f.trig) return;
+    f.trig.splice(+b.dataset.fti, 1);
+    if(!f.trig.length) delete f.trig;
+    save(); renderAll();
+  }
 });
 document.getElementById('fAdd').addEventListener('click', function(){
   S.funds.push({id:S.nextId++, name:'Новый фонд', goal:0, quota:0, value:0, base:0, cycle:1, spent:0, reserve:false});
